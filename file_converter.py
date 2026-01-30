@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 import winsound  # For completion sound notification
+import json  # For saving window settings
 
 # Set appearance mode and color theme
 ctk.set_appearance_mode("dark")  # Modes: "System", "Dark", "Light"
@@ -45,8 +46,47 @@ class FileConverterApp:
         self.input_file = None # Keep for compatibility, will be "current file"
         self.failed_files_paths = []  # Store paths for retry functionality
         self.ffmpeg_path = self.find_ffmpeg()
+        
+        # Config file for saving window settings
+        self.config_file = Path(os.path.dirname(os.path.abspath(__file__))) / "hindura_config.json"
+        self.load_window_geometry()
 
         self.create_widgets()
+        
+        # Save window position on close
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+    
+    def load_window_geometry(self):
+        """Load saved window position and size"""
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+                    geometry = config.get('window_geometry', '800x800')
+                    self.root.geometry(geometry)
+                    return
+        except Exception:
+            pass
+        # Default if no config
+        self.root.geometry("800x800")
+    
+    def save_window_geometry(self):
+        """Save window position and size"""
+        try:
+            config = {}
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+            config['window_geometry'] = self.root.geometry()
+            with open(self.config_file, 'w') as f:
+                json.dump(config, f)
+        except Exception:
+            pass
+    
+    def on_closing(self):
+        """Handle window close event"""
+        self.save_window_geometry()
+        self.root.destroy()
     
     def find_ffmpeg(self):
         """Find ffmpeg executable in the current directory or system PATH"""

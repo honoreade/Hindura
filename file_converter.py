@@ -1,16 +1,23 @@
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
 import subprocess
 import os
+import threading
+import re
 from pathlib import Path
 from datetime import datetime
+import winsound  # For completion sound notification
+
+# Set appearance mode and color theme
+ctk.set_appearance_mode("dark")  # Modes: "System", "Dark", "Light"
+ctk.set_default_color_theme("blue")  # Themes: "blue", "green", "dark-blue"
 
 class FileConverterApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("File Converter Pro")
-        self.root.geometry("700x700")
-        self.root.resizable(False, False)
+        self.root.title("Hindura Pro")
+        self.root.geometry("800x800")
+        self.root.resizable(True, True)
 
         # File types and their supported formats
         self.file_types = {
@@ -34,7 +41,9 @@ class FileConverterApp:
         self.resize_options = ["None", "1920x1080 (1080p)", "1280x720 (720p)",
                                "854x480 (480p)", "640x360 (360p)", "Custom"]
 
-        self.input_file = None
+        self.input_files = []
+        self.input_file = None # Keep for compatibility, will be "current file"
+        self.failed_files_paths = []  # Store paths for retry functionality
         self.ffmpeg_path = self.find_ffmpeg()
 
         self.create_widgets()
@@ -103,156 +112,336 @@ class FileConverterApp:
             pass
     
     def create_widgets(self):
+        # Main container (Scrollable to ensure fit on all screens)
+        main_container = ctk.CTkScrollableFrame(self.root, fg_color="transparent")
+        main_container.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Header with title and theme toggle
+        header_frame = ctk.CTkFrame(main_container, fg_color="transparent")
+        header_frame.pack(fill="x", pady=(0, 10))
+
         # Title
-        title_label = tk.Label(self.root, text="File Converter Pro", font=("Arial", 20, "bold"))
-        title_label.pack(pady=15)
+        title_label = ctk.CTkLabel(header_frame, text="🎬 File Converter Pro",
+                                   font=ctk.CTkFont(size=28, weight="bold"))
+        title_label.pack(side="left", expand=True)
+
+        # Theme toggle
+        self.theme_var = ctk.StringVar(value="dark")
+        theme_switch = ctk.CTkSwitch(header_frame, text="🌙",
+                                     command=self.toggle_theme,
+                                     variable=self.theme_var,
+                                     onvalue="dark", offvalue="light",
+                                     width=40)
+        theme_switch.pack(side="right", padx=10)
 
         # File selection frame
-        file_frame = tk.Frame(self.root)
-        file_frame.pack(pady=10, padx=20, fill="x")
+        file_frame = ctk.CTkFrame(main_container)
+        file_frame.pack(fill="both", expand=True, pady=10)
 
-        self.file_label = tk.Label(file_frame, text="No file selected", bg="lightgray", relief="sunken", anchor="w")
-        self.file_label.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        # File buttons
+        file_btn_frame = ctk.CTkFrame(file_frame, fg_color="transparent")
+        file_btn_frame.pack(fill="x", padx=10, pady=5)
+        
+        add_btn = ctk.CTkButton(file_btn_frame, text="✅ Add Files", command=self.add_files,
+                                   width=100, height=30, font=ctk.CTkFont(size=12))
+        add_btn.pack(side="left", padx=5)
+        
+        clear_btn = ctk.CTkButton(file_btn_frame, text="�️ Clear All", command=self.clear_files,
+                                   width=100, height=30, font=ctk.CTkFont(size=12),
+                                   fg_color="#dc3545", hover_color="#c82333")
+        clear_btn.pack(side="right", padx=5)
 
-        browse_btn = tk.Button(file_frame, text="Browse", command=self.browse_file, width=10)
-        browse_btn.pack(side="right")
+        # Scrollable list for files
+        self.file_scroll = ctk.CTkScrollableFrame(file_frame, height=150, fg_color="transparent")
+        self.file_scroll.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        self.no_files_label = ctk.CTkLabel(self.file_scroll, text="No files selected", text_color="gray")
+        self.no_files_label.pack(pady=20)
 
-        # Main Mode frame (Standard Conversion, Resize, Compression)
-        mode_frame = tk.Frame(self.root)
-        mode_frame.pack(pady=10, padx=20, fill="x")
+        # Settings frame
+        settings_frame = ctk.CTkFrame(main_container)
+        settings_frame.pack(fill="x", pady=10)
 
-        tk.Label(mode_frame, text="Mode:", width=10, anchor="w").pack(side="left")
-        self.mode_var = tk.StringVar(value="Standard Conversion")
-        self.mode_combo = ttk.Combobox(mode_frame, textvariable=self.mode_var,
-                                       values=self.main_modes, state="readonly", width=20)
+        # Mode selection
+        mode_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        mode_frame.pack(fill="x", padx=15, pady=10)
+
+        ctk.CTkLabel(mode_frame, text="Mode:", width=80, anchor="w",
+                     font=ctk.CTkFont(size=13)).pack(side="left")
+        self.mode_var = ctk.StringVar(value="Standard Conversion")
+        self.mode_combo = ctk.CTkComboBox(mode_frame, variable=self.mode_var,
+                                          values=self.main_modes, width=200,
+                                          command=self.on_mode_change)
         self.mode_combo.pack(side="left", padx=10)
-        self.mode_combo.bind("<<ComboboxSelected>>", self.on_mode_change)
 
-        # Type selection frame
-        type_frame = tk.Frame(self.root)
-        type_frame.pack(pady=10, padx=20, fill="x")
+        # Type selection
+        type_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        type_frame.pack(fill="x", padx=15, pady=10)
 
-        tk.Label(type_frame, text="Type:", width=10, anchor="w").pack(side="left")
-        self.type_var = tk.StringVar()
-        self.type_combo = ttk.Combobox(type_frame, textvariable=self.type_var,
-                                       values=list(self.file_types.keys()), state="readonly", width=20)
+        ctk.CTkLabel(type_frame, text="Type:", width=80, anchor="w",
+                     font=ctk.CTkFont(size=13)).pack(side="left")
+        self.type_var = ctk.StringVar()
+        self.type_combo = ctk.CTkComboBox(type_frame, variable=self.type_var,
+                                          values=list(self.file_types.keys()), width=200,
+                                          command=self.on_type_change)
         self.type_combo.pack(side="left", padx=10)
-        self.type_combo.bind("<<ComboboxSelected>>", self.on_type_change)
 
-        # From format frame
-        from_frame = tk.Frame(self.root)
-        from_frame.pack(pady=10, padx=20, fill="x")
+        # From format
+        from_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        from_frame.pack(fill="x", padx=15, pady=10)
 
-        tk.Label(from_frame, text="From:", width=10, anchor="w").pack(side="left")
-        self.from_var = tk.StringVar()
-        self.from_combo = ttk.Combobox(from_frame, textvariable=self.from_var, state="readonly", width=20)
+        ctk.CTkLabel(from_frame, text="From:", width=80, anchor="w",
+                     font=ctk.CTkFont(size=13)).pack(side="left")
+        self.from_var = ctk.StringVar()
+        self.from_combo = ctk.CTkComboBox(from_frame, variable=self.from_var,
+                                          values=[], width=200,
+                                          command=self.on_from_change)
         self.from_combo.pack(side="left", padx=10)
-        self.from_combo.bind("<<ComboboxSelected>>", self.on_from_change)
 
-        # To format frame
-        self.to_frame = tk.Frame(self.root)
-        self.to_frame.pack(pady=10, padx=20, fill="x")
+        # To format
+        to_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        to_frame.pack(fill="x", padx=15, pady=10)
 
-        tk.Label(self.to_frame, text="To:", width=10, anchor="w").pack(side="left")
-        self.to_var = tk.StringVar()
-        self.to_combo = ttk.Combobox(self.to_frame, textvariable=self.to_var, state="readonly", width=20)
+        ctk.CTkLabel(to_frame, text="To:", width=80, anchor="w",
+                     font=ctk.CTkFont(size=13)).pack(side="left")
+        self.to_var = ctk.StringVar()
+        self.to_combo = ctk.CTkComboBox(to_frame, variable=self.to_var,
+                                        values=[], width=200,
+                                        command=self.on_to_change)
         self.to_combo.pack(side="left", padx=10)
-        self.to_combo.bind("<<ComboboxSelected>>", self.on_to_change)
 
         # Output folder frame
-        output_frame = tk.Frame(self.root)
-        output_frame.pack(pady=10, padx=20, fill="x")
+        output_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        output_frame.pack(fill="x", padx=15, pady=10)
 
-        tk.Label(output_frame, text="Output:", width=10, anchor="w").pack(side="left")
-        self.output_var = tk.StringVar(value="Same as input")
-        self.output_entry = tk.Entry(output_frame, textvariable=self.output_var, state="readonly", width=35)
-        self.output_entry.pack(side="left", padx=(10, 5), fill="x", expand=True)
+        ctk.CTkLabel(output_frame, text="Output:", width=80, anchor="w",
+                     font=ctk.CTkFont(size=13)).pack(side="left")
+        self.output_var = ctk.StringVar(value="Same as input")
+        self.output_entry = ctk.CTkEntry(output_frame, textvariable=self.output_var,
+                                         state="readonly", width=250)
+        self.output_entry.pack(side="left", padx=10)
 
-        self.output_browse_btn = tk.Button(output_frame, text="Browse", command=self.browse_output_folder, width=8)
+        self.output_browse_btn = ctk.CTkButton(output_frame, text="📂",
+                                               command=self.browse_output_folder,
+                                               width=40, height=28)
         self.output_browse_btn.pack(side="left", padx=2)
 
-        self.output_reset_btn = tk.Button(output_frame, text="Reset", command=self.reset_output_folder, width=6)
+        self.output_reset_btn = ctk.CTkButton(output_frame, text="↺",
+                                              command=self.reset_output_folder,
+                                              width=40, height=28,
+                                              fg_color="#6c757d", hover_color="#5a6268")
         self.output_reset_btn.pack(side="left", padx=2)
 
         # ===== OPTIONS FRAME =====
-        self.options_frame = tk.LabelFrame(self.root, text="Options", padx=10, pady=10)
-        self.options_frame.pack(pady=10, padx=20, fill="x")
+        self.options_frame = ctk.CTkFrame(main_container)
+        self.options_frame.pack(fill="x", pady=10)
 
-        # Resize options for visual media (Standard Conversion)
-        self.resize_frame = tk.Frame(self.options_frame)
-        tk.Label(self.resize_frame, text="Resize:", width=10, anchor="w").pack(side="left")
-        self.resize_var = tk.StringVar(value="None")
-        self.resize_combo = ttk.Combobox(self.resize_frame, textvariable=self.resize_var,
-                                         values=self.resize_options, state="readonly", width=18)
-        self.resize_combo.pack(side="left", padx=5)
-        self.resize_combo.bind("<<ComboboxSelected>>", self.on_resize_change)
+        options_title = ctk.CTkLabel(self.options_frame, text="⚙️ Options",
+                                     font=ctk.CTkFont(size=14, weight="bold"))
+        options_title.pack(anchor="w", padx=15, pady=(10, 5))
+
+        # Resize options container
+        self.resize_frame = ctk.CTkFrame(self.options_frame, fg_color="transparent")
+
+        resize_inner = ctk.CTkFrame(self.resize_frame, fg_color="transparent")
+        resize_inner.pack(fill="x", padx=15, pady=5)
+
+        ctk.CTkLabel(resize_inner, text="Resize:", width=80, anchor="w",
+                     font=ctk.CTkFont(size=13)).pack(side="left")
+        self.resize_var = ctk.StringVar(value="None")
+        self.resize_combo = ctk.CTkComboBox(resize_inner, variable=self.resize_var,
+                                            values=self.resize_options, width=180,
+                                            command=self.on_resize_change)
+        self.resize_combo.pack(side="left", padx=10)
 
         # Custom resolution entry
-        self.custom_res_frame = tk.Frame(self.resize_frame)
-        tk.Label(self.custom_res_frame, text="W:").pack(side="left")
-        self.width_entry = tk.Entry(self.custom_res_frame, width=5)
-        self.width_entry.pack(side="left", padx=2)
-        tk.Label(self.custom_res_frame, text="H:").pack(side="left")
-        self.height_entry = tk.Entry(self.custom_res_frame, width=5)
-        self.height_entry.pack(side="left", padx=2)
+        self.custom_res_frame = ctk.CTkFrame(resize_inner, fg_color="transparent")
+        ctk.CTkLabel(self.custom_res_frame, text="W:", font=ctk.CTkFont(size=12)).pack(side="left")
+        self.width_entry = ctk.CTkEntry(self.custom_res_frame, width=60)
+        self.width_entry.pack(side="left", padx=5)
+        ctk.CTkLabel(self.custom_res_frame, text="H:", font=ctk.CTkFont(size=12)).pack(side="left")
+        self.height_entry = ctk.CTkEntry(self.custom_res_frame, width=60)
+        self.height_entry.pack(side="left", padx=5)
 
-        # GIF options (shown when gif is selected in "To:")
-        self.gif_options_frame = tk.Frame(self.options_frame)
-        tk.Label(self.gif_options_frame, text="GIF Settings:", width=10, anchor="w").pack(side="left")
-        tk.Label(self.gif_options_frame, text="FPS:").pack(side="left")
-        self.fps_var = tk.StringVar(value="10")
-        self.fps_combo = ttk.Combobox(self.gif_options_frame, textvariable=self.fps_var,
-                                      values=["5", "10", "15", "20", "24", "30"],
-                                      state="readonly", width=5)
+        # GIF options
+        self.gif_options_frame = ctk.CTkFrame(self.options_frame, fg_color="transparent")
+
+        gif_inner = ctk.CTkFrame(self.gif_options_frame, fg_color="transparent")
+        gif_inner.pack(fill="x", padx=15, pady=5)
+
+        ctk.CTkLabel(gif_inner, text="GIF Settings:", width=80, anchor="w",
+                     font=ctk.CTkFont(size=13)).pack(side="left")
+        ctk.CTkLabel(gif_inner, text="FPS:", font=ctk.CTkFont(size=12)).pack(side="left", padx=(10, 0))
+        self.fps_var = ctk.StringVar(value="10")
+        self.fps_combo = ctk.CTkComboBox(gif_inner, variable=self.fps_var,
+                                         values=["5", "10", "15", "20", "24", "30"], width=70)
         self.fps_combo.pack(side="left", padx=5)
-        tk.Label(self.gif_options_frame, text="Scale:").pack(side="left")
-        self.gif_scale_var = tk.StringVar(value="320")
-        self.gif_scale_combo = ttk.Combobox(self.gif_options_frame, textvariable=self.gif_scale_var,
-                                            values=["160", "240", "320", "480", "640"],
-                                            state="readonly", width=5)
+        ctk.CTkLabel(gif_inner, text="Scale:", font=ctk.CTkFont(size=12)).pack(side="left", padx=(10, 0))
+        self.gif_scale_var = ctk.StringVar(value="320")
+        self.gif_scale_combo = ctk.CTkComboBox(gif_inner, variable=self.gif_scale_var,
+                                               values=["160", "240", "320", "480", "640"], width=80)
         self.gif_scale_combo.pack(side="left", padx=5)
 
-        # ===== COMPRESSION OPTIONS =====
-        self.compress_frame = tk.Frame(self.options_frame)
-        tk.Label(self.compress_frame, text="Quality:", width=10, anchor="w").pack(side="left")
-        self.quality_var = tk.StringVar(value="Medium")
-        self.quality_combo = ttk.Combobox(self.compress_frame, textvariable=self.quality_var,
-                                          values=["High (Large file)", "Medium", "Low (Small file)"],
-                                          state="readonly", width=20)
-        self.quality_combo.pack(side="left", padx=5)
+        # Compression options
+        self.compress_frame = ctk.CTkFrame(self.options_frame, fg_color="transparent")
+
+        compress_inner = ctk.CTkFrame(self.compress_frame, fg_color="transparent")
+        compress_inner.pack(fill="x", padx=15, pady=5)
+
+        ctk.CTkLabel(compress_inner, text="Quality:", width=80, anchor="w",
+                     font=ctk.CTkFont(size=13)).pack(side="left")
+        self.quality_var = ctk.StringVar(value="Medium")
+        self.quality_combo = ctk.CTkComboBox(compress_inner, variable=self.quality_var,
+                                             values=["High (Large file)", "Medium", "Low (Small file)"],
+                                             width=200)
+        self.quality_combo.pack(side="left", padx=10)
+
+        # Button frame for Convert and Cancel
+        button_frame = ctk.CTkFrame(main_container, fg_color="transparent")
+        button_frame.pack(pady=25)
 
         # Convert button
-        convert_btn = tk.Button(self.root, text="Convert", command=self.convert_file,
-                               bg="#4CAF50", fg="white", font=("Arial", 12, "bold"),
-                               width=20, height=2)
-        convert_btn.pack(pady=20)
+        self.convert_btn = ctk.CTkButton(button_frame, text="🚀 Convert",
+                                    command=self.start_batch_conversion,
+                                    width=200, height=50,
+                                    font=ctk.CTkFont(size=16, weight="bold"),
+                                    fg_color="#28a745", hover_color="#218838")
+        self.convert_btn.pack(side="left", padx=10)
+
+        # Cancel button (hidden by default)
+        self.cancel_btn = ctk.CTkButton(button_frame, text="❌ Cancel",
+                                        command=self.cancel_conversion,
+                                        width=120, height=50,
+                                        font=ctk.CTkFont(size=14, weight="bold"),
+                                        fg_color="#dc3545", hover_color="#c82333")
+        # Cancel button is hidden initially
+
+        # Retry Failed button (hidden by default, shown after failed conversions)
+        self.retry_btn = ctk.CTkButton(button_frame, text="🔄 Retry Failed",
+                                       command=self.retry_failed_conversions,
+                                       width=140, height=50,
+                                       font=ctk.CTkFont(size=14, weight="bold"),
+                                       fg_color="#fd7e14", hover_color="#e96e00")
+        # Retry button is hidden initially
+
+        # Progress frame
+        self.progress_frame = ctk.CTkFrame(main_container, fg_color="transparent")
+
+        # Progress bar
+        self.progress_bar = ctk.CTkProgressBar(self.progress_frame, width=400, mode="determinate")
+        self.progress_bar.set(0)
+        self.progress_bar.pack(pady=5)
+
+        # Progress percentage label
+        self.progress_label = ctk.CTkLabel(self.progress_frame, text="0%",
+                                           font=ctk.CTkFont(size=12))
+        self.progress_label.pack(pady=2)
 
         # Status label
-        self.status_label = tk.Label(self.root, text="", fg="blue")
+        self.status_label = ctk.CTkLabel(main_container, text="",
+                                         font=ctk.CTkFont(size=13))
         self.status_label.pack(pady=5)
 
+        # Initialize conversion state
+        self.conversion_process = None
+        self.is_converting = False
+
         # FFmpeg status
-        ffmpeg_status = "FFmpeg found ✓" if self.ffmpeg_path else "FFmpeg not found ✗"
-        ffmpeg_color = "green" if self.ffmpeg_path else "red"
-        tk.Label(self.root, text=ffmpeg_status, fg=ffmpeg_color).pack(side="bottom", pady=5)
+        ffmpeg_status = "✅ FFmpeg found" if self.ffmpeg_path else "❌ FFmpeg not found"
+        ffmpeg_color = "#28a745" if self.ffmpeg_path else "#dc3545"
+        ffmpeg_label = ctk.CTkLabel(main_container, text=ffmpeg_status,
+                                    font=ctk.CTkFont(size=12),
+                                    text_color=ffmpeg_color)
+        ffmpeg_label.pack(side="bottom", pady=5)
 
         # Initialize UI state
         self.on_mode_change(None)
-    
-    def browse_file(self):
-        filename = filedialog.askopenfilename(title="Select a file to convert")
-        if filename:
-            self.input_file = filename
-            self.file_label.config(text=os.path.basename(filename))
 
-            # Auto-detect file type and format
-            ext = Path(filename).suffix[1:].lower()
-            for file_type, formats in self.file_types.items():
-                if ext in formats:
-                    self.type_combo.set(file_type)
-                    self.from_combo.set(ext)
-                    self.on_type_change(None)
-                    break
+    def toggle_theme(self):
+        """Toggle between dark and light theme"""
+        if self.theme_var.get() == "dark":
+            ctk.set_appearance_mode("dark")
+        else:
+            ctk.set_appearance_mode("light")
+
+    def add_files(self):
+        filenames = filedialog.askopenfilenames(title="Select files to convert")
+        if filenames:
+            for f in filenames:
+                if f not in self.input_files:
+                    self.input_files.append(f)
+            
+            self.update_file_list_ui()
+            
+            # Update type/format based on the first file if valid
+            if self.input_files:
+                self.input_file = self.input_files[0]
+                self._update_format_options(self.input_file)
+
+    def clear_files(self):
+        self.input_files = []
+        self.input_file = None
+        self.update_file_list_ui()
+
+    def remove_file(self, file_path):
+        if file_path in self.input_files:
+            self.input_files.remove(file_path)
+            self.update_file_list_ui()
+            
+            if not self.input_files:
+                self.input_file = None
+            elif self.input_file == file_path:
+                self.input_file = self.input_files[0]
+
+    def update_file_list_ui(self):
+        # Clear current list
+        for widget in self.file_scroll.winfo_children():
+            widget.destroy()
+
+        if not self.input_files:
+            self.no_files_label = ctk.CTkLabel(self.file_scroll, text="No files selected", text_color="gray")
+            self.no_files_label.pack(pady=20)
+            return
+
+        for f in self.input_files:
+            row = ctk.CTkFrame(self.file_scroll, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+            
+            # Get file size and format display text
+            display_name = os.path.basename(f)
+            try:
+                size = os.path.getsize(f)
+                size_str = self.format_file_size(size)
+                display_text = f"{display_name} ({size_str})"
+            except OSError:
+                display_text = display_name
+            
+            lbl = ctk.CTkLabel(row, text=display_text, anchor="w")
+            lbl.pack(side="left", padx=5)
+            
+            # Remove button
+            btn = ctk.CTkButton(row, text="❌", width=30, height=20, 
+                                command=lambda path=f: self.remove_file(path),
+                                fg_color="transparent", text_color="#dc3545", hover_color="#444")
+            btn.pack(side="right", padx=5)
+
+    def format_file_size(self, size_bytes):
+        """Format file size in human-readable units"""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.1f} TB"
+
+    def _update_format_options(self, filename):
+        # Auto-detect file type and format
+        ext = Path(filename).suffix[1:].lower()
+        for file_type, formats in self.file_types.items():
+            if ext in formats:
+                self.type_combo.set(file_type)
+                self.from_combo.set(ext)
+                self.on_type_change(None)
+                break
 
     def browse_output_folder(self):
         """Browse for output folder"""
@@ -264,16 +453,16 @@ class FileConverterApp:
         """Reset output folder to same as input"""
         self.output_var.set("Same as input")
 
-    def on_type_change(self, event):
+    def on_type_change(self, event=None):
         selected_type = self.type_var.get()
         if selected_type in self.file_types:
             formats = self.file_types[selected_type]
-            self.from_combo.config(values=formats)
+            self.from_combo.configure(values=formats)
 
             # Update UI based on mode and type
             self.on_mode_change(None)
 
-    def on_from_change(self, event):
+    def on_from_change(self, event=None):
         """Handle changes to the From format dropdown"""
         self.update_to_formats()
 
@@ -289,31 +478,31 @@ class FileConverterApp:
                 video_formats = [fmt for fmt in self.file_types["Video"] if fmt != from_format]
                 audio_formats = self.file_types["Audio"]
                 all_formats = video_formats + audio_formats
-                self.to_combo.config(values=all_formats)
+                self.to_combo.configure(values=all_formats)
                 if self.to_var.get() == from_format:
                     self.to_var.set("")
             elif selected_type == "Image":
                 # For image: show image formats excluding current
                 all_formats = [fmt for fmt in self.file_types["Image"] if fmt != from_format]
-                self.to_combo.config(values=all_formats)
+                self.to_combo.configure(values=all_formats)
                 if self.to_var.get() == from_format:
                     self.to_var.set("")
             else:
                 # For other types: show formats excluding current
                 if selected_type in self.file_types:
                     all_formats = [fmt for fmt in self.file_types[selected_type] if fmt != from_format]
-                    self.to_combo.config(values=all_formats)
+                    self.to_combo.configure(values=all_formats)
                     if self.to_var.get() == from_format:
                         self.to_var.set("")
 
         elif mode == "Resize":
             # Show video and image formats only (keep same format by default)
             if selected_type == "Video":
-                self.to_combo.config(values=self.file_types["Video"])
+                self.to_combo.configure(values=self.file_types["Video"])
                 if not self.to_var.get() or self.to_var.get() not in self.file_types["Video"]:
                     self.to_var.set(from_format if from_format else "mp4")
             elif selected_type == "Image":
-                self.to_combo.config(values=self.file_types["Image"])
+                self.to_combo.configure(values=self.file_types["Image"])
                 if not self.to_var.get() or self.to_var.get() not in self.file_types["Image"]:
                     self.to_var.set(from_format if from_format else "jpg")
 
@@ -321,16 +510,16 @@ class FileConverterApp:
             # Show formats based on the file type (keep same format by default)
             if selected_type in self.file_types:
                 formats = self.file_types[selected_type]
-                self.to_combo.config(values=formats)
+                self.to_combo.configure(values=formats)
                 if not self.to_var.get() or self.to_var.get() not in formats:
                     self.to_var.set(from_format if from_format else formats[0])
         else:
             # Default: show all formats for the selected type
             if selected_type in self.file_types:
                 formats = self.file_types[selected_type]
-                self.to_combo.config(values=formats)
+                self.to_combo.configure(values=formats)
 
-    def on_mode_change(self, event):
+    def on_mode_change(self, event=None):
         """Handle main mode changes (Standard Conversion, Resize, Compression)"""
         mode = self.mode_var.get()
         selected_type = self.type_var.get()
@@ -367,7 +556,7 @@ class FileConverterApp:
             self.compress_frame.pack(fill="x", pady=5)
             self.update_to_formats()
 
-    def on_to_change(self, event):
+    def on_to_change(self, event=None):
         """Handle changes to the To format dropdown - show GIF options when gif selected"""
         to_format = self.to_var.get()
         selected_type = self.type_var.get()
@@ -379,38 +568,143 @@ class FileConverterApp:
         if to_format == "gif" and selected_type == "Video":
             self.gif_options_frame.pack(fill="x", pady=5)
 
-    def on_resize_change(self, event):
+    def on_resize_change(self, event=None):
         """Show/hide custom resolution fields"""
         if self.resize_var.get() == "Custom":
             self.custom_res_frame.pack(side="left", padx=10)
         else:
             self.custom_res_frame.pack_forget()
 
-    def convert_file(self):
-        if not self.input_file:
-            messagebox.showerror("Error", "Please select a file to convert")
+    def start_batch_conversion(self):
+        """Start the batch conversion process"""
+        if self.is_converting:
+            messagebox.showwarning("Warning", "A conversion is already in progress")
+            return
+
+        if not self.input_files:
+            messagebox.showerror("Error", "Please select files to convert")
             return
 
         if not self.ffmpeg_path:
             messagebox.showerror("Error", "FFmpeg not found. Please extract ffmpeg.zip and restart the application.")
             return
 
+        # Validate options
+        if not self.to_var.get():
+            messagebox.showwarning("Warning", "Please select a target format option.")
+            return
+            
+        # Validate custom resize if applicable
+        if self.mode_var.get() == "Resize" and self.resize_var.get() == "Custom":
+            if not self.width_entry.get() or not self.height_entry.get():
+                 messagebox.showwarning("Warning", "Please enter valid Width and Height for custom resize.")
+                 return
+
+        # Initialize queue
+        self.conversion_queue = list(self.input_files)
+        self.total_files = len(self.conversion_queue)
+        self.completed_count = 0
+        self.failed_files = []
+        self.failed_files_paths = []  # Track paths for retry
+        
+        # Start UI
+        self.is_converting = True
+        self.input_duration = 0
+        self.start_conversion_ui()
+        
+        # Start processing
+        self.process_next_file()
+
+    def process_next_file(self):
+        """Process the next file in the queue"""
+        if not self.conversion_queue:
+            # All done
+            self.stop_conversion_ui()
+            
+            # Play completion sound
+            try:
+                winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            except:
+                pass  # Ignore if sound fails
+            
+            if self.failed_files:
+                failed_summary = "\n".join(self.failed_files[:5])
+                if len(self.failed_files) > 5:
+                    failed_summary += f"\n...and {len(self.failed_files) - 5} more."
+                
+                # Show retry button if there were failures
+                self.retry_btn.pack(side="left", padx=10)
+                
+                messagebox.showwarning("Batch Complete with Errors", 
+                                      f"Processed {self.total_files} files.\n\n"
+                                      f"✅ Successful: {self.total_files - len(self.failed_files)}\n"
+                                      f"❌ Failed: {len(self.failed_files)}\n\n"
+                                      f"Failures:\n{failed_summary}")
+            else:
+                # Hide retry button on success
+                self.retry_btn.pack_forget()
+                messagebox.showinfo("Success", f"Batch conversion complete!\nSuccessfully processed {self.total_files} files.")
+            return
+
+        self.current_processing_file = self.conversion_queue.pop(0)
+        self.input_file = self.current_processing_file # Update current file for compatibility
+        
+        # Update status
+        remaining = len(self.conversion_queue) + 1
+        current_num = self.total_files - remaining + 1
+        self.status_label.configure(text=f"⏳ Converting file {current_num}/{self.total_files}: {os.path.basename(self.input_file)}", text_color="#3498db")
+        
+        self._start_single_file_conversion(self.input_file)
+
+    def retry_failed_conversions(self):
+        """Retry only the files that failed in the last batch"""
+        if not self.failed_files_paths:
+            messagebox.showinfo("Info", "No failed files to retry.")
+            return
+        
+        if self.is_converting:
+            messagebox.showwarning("Warning", "A conversion is already in progress")
+            return
+        
+        # Hide retry button
+        self.retry_btn.pack_forget()
+        
+        # Set up queue with failed files only
+        self.conversion_queue = list(self.failed_files_paths)
+        self.total_files = len(self.conversion_queue)
+        self.completed_count = 0
+        self.failed_files = []
+        self.failed_files_paths = []
+        
+        # Start UI
+        self.is_converting = True
+        self.input_duration = 0
+        self.start_conversion_ui()
+        
+        # Start processing
+        self.process_next_file()
+
+    def _start_single_file_conversion(self, input_file_path):
+        """Internal method to convert a single file"""
         mode = self.mode_var.get()
-        from_format = self.from_var.get()
+        from_format = self.from_var.get() # Note: logic currently assumes same from/to for all files if they match extension
+        # If files have different extensions, we might need to auto-detect 'to' format per file or force one.
+        # Current logic in UI sets 'from' based on first file. We'll stick to that simple logic 
+        # but re-verify if the file extension matches the expectations if needed. 
+        # For now, we assume user knows what they are doing converting mixed files to one format.
+        
         to_format = self.to_var.get()
         file_type = self.type_var.get()
         resize_option = self.resize_var.get() if hasattr(self, 'resize_var') else "None"
 
-        if not from_format:
-            messagebox.showerror("Error", "Please select source format")
-            return
-
         if not to_format:
+            # Should have been caught, but safe check
+            self.stop_conversion_ui()
             messagebox.showerror("Error", "Please select target format")
             return
 
         # Generate output filename
-        input_path = Path(self.input_file)
+        input_path = Path(input_file_path)
 
         # Determine conversion type based on mode and "to" format
         suffix = "_converted"
@@ -454,64 +748,265 @@ class FileConverterApp:
                 try:
                     output_folder.mkdir(parents=True, exist_ok=True)
                 except Exception as e:
+                    self.stop_conversion_ui()
                     messagebox.showerror("Error", f"Could not create output folder: {e}")
                     return
 
         output_file = output_folder / f"{input_path.stem}{suffix}.{to_format}"
 
-        self.status_label.config(text="Converting...", fg="blue")
+        # Overwrite protection
+        if output_file.exists():
+            # For batch, maybe we should just skip or auto-rename?
+            # Asking for every file is annoying. Let's auto-rename for batch simplicity or ask?
+            # Asking might block thread if not careful, but we are on main thread here.
+            if not messagebox.askyesno("File Exists", f"The file '{output_file.name}' already exists.\nDo you want to overwrite it?"):
+                # Skip this file
+                self.process_next_file()
+                return
+
+        # Atomic write: use .tmp suffix before extension so FFmpeg knows format
+        temp_output_file = output_folder / f"{input_path.stem}{suffix}.tmp.{to_format}"
+
+        # Build ffmpeg command based on conversion type
+        cmd = [self.ffmpeg_path, "-i", input_file_path]
+
+        if conversion_type == "audio_extract":
+            cmd.extend(self.get_audio_extraction_params(to_format))
+        elif conversion_type == "gif":
+            cmd.extend(self.get_gif_conversion_params())
+        elif conversion_type == "resize" or conversion_type == "resize_standard":
+            cmd.extend(self.get_resize_params(to_format))
+        elif conversion_type == "compress":
+            cmd.extend(self.get_compression_params(to_format))
+        else:
+            # Standard conversion
+            cmd.extend(self.get_standard_conversion_params(file_type, to_format))
+
+        # Add output file and overwrite flag (always overwrite the tmp file)
+        cmd.extend(["-y", str(temp_output_file)])
+
+        # Log the command for debugging
+        self.log_error(f"Running command: {' '.join(cmd)}")
+
+        # Get input file duration for progress calculation
+        self.input_duration = self.get_media_duration(input_file_path)
+
+        # We are already in UI mode (batch), so no need to call start_conversion_ui again
+        # But we need to reset progress bar for this file and ensure correct mode
+        if self.input_duration and self.input_duration > 0:
+            self.progress_bar.configure(mode="determinate")
+            self.progress_bar.set(0)
+            self.progress_label.configure(text="0%")
+        else:
+            self.progress_bar.configure(mode="indeterminate")
+            self.progress_bar.start()
+            self.progress_label.configure(text="Processing...")
+
+        # Run conversion in a separate thread
+        conversion_thread = threading.Thread(
+            target=self._run_conversion_thread,
+            args=(cmd, temp_output_file, output_file),
+            daemon=True
+        )
+        conversion_thread.start()
+
+    def get_media_duration(self, file_path):
+        """Get the duration of a media file in seconds"""
+        try:
+            cmd = [self.ffmpeg_path, "-i", file_path]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            # FFmpeg outputs duration in stderr
+            duration_match = re.search(r'Duration: (\d{2}):(\d{2}):(\d{2})\.(\d{2})', result.stderr)
+            if duration_match:
+                hours, minutes, seconds, centiseconds = map(int, duration_match.groups())
+                return hours * 3600 + minutes * 60 + seconds + centiseconds / 100
+        except Exception as e:
+            self.log_error(f"Could not get duration: {e}")
+        return None
+
+    def start_conversion_ui(self):
+        """Update UI to show conversion in progress"""
+        self.convert_btn.configure(state="disabled")
+        self.cancel_btn.pack(side="left", padx=10)
+        self.progress_frame.pack(pady=5)
+
+        # Use indeterminate mode if we couldn't get duration
+        if self.input_duration and self.input_duration > 0:
+            self.progress_bar.configure(mode="determinate")
+            self.progress_bar.set(0)
+            self.progress_label.configure(text="0%")
+            self.status_label.configure(text="⏳ Converting... (0%)", text_color="#3498db")
+        else:
+            self.progress_bar.configure(mode="indeterminate")
+            self.progress_bar.start()
+            self.progress_label.configure(text="Processing...")
+            self.status_label.configure(text="⏳ Converting...", text_color="#3498db")
+
         self.root.update()
 
+    def stop_conversion_ui(self):
+        """Reset UI after conversion completes"""
+        self.convert_btn.configure(state="normal")
+        self.cancel_btn.pack_forget()
+        self.progress_bar.stop()  # Stop indeterminate animation if running
+        self.progress_frame.pack_forget()
+        self.is_converting = False
+
+    def cancel_conversion(self):
+        """Cancel the ongoing conversion"""
+        # Clear queue so we don't continue
+        self.conversion_queue = []
+        
+        if self.conversion_process and self.is_converting:
+            try:
+                self.conversion_process.terminate()
+                self.conversion_process.wait(timeout=5)
+            except Exception as e:
+                self.log_error(f"Error terminating process: {e}")
+                try:
+                    self.conversion_process.kill()
+                except:
+                    pass
+
+            self.root.after(0, self._on_conversion_cancelled)
+
+    def _on_conversion_cancelled(self):
+        """Handle UI update after cancellation"""
+        self.stop_conversion_ui()
+        self.status_label.configure(text="⚠️ Conversion cancelled", text_color="#ffc107")
+
+    def _run_conversion_thread(self, cmd, temp_output_file, final_output_file):
+        """Run FFmpeg conversion in a background thread with progress monitoring"""
         try:
-            # Build ffmpeg command based on conversion type
-            cmd = [self.ffmpeg_path, "-i", self.input_file]
+            # Start the process - Use DEVNULL for stdout to prevent deadlocks (since we don't read it)
+            self.conversion_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
 
-            if conversion_type == "audio_extract":
-                cmd.extend(self.get_audio_extraction_params(to_format))
+            stderr_output = []
 
-            elif conversion_type == "gif":
-                cmd.extend(self.get_gif_conversion_params())
+            # Read stderr line by line (FFmpeg outputs progress to stderr)
+            for line in self.conversion_process.stderr:
+                if not self.is_converting:
+                    break
 
-            elif conversion_type == "resize" or conversion_type == "resize_standard":
-                cmd.extend(self.get_resize_params(to_format))
+                stderr_output.append(line)
 
-            elif conversion_type == "compress":
-                cmd.extend(self.get_compression_params(to_format))
+                # Parse time progress from stderr (format: time=00:01:23.45)
+                if "time=" in line:
+                    try:
+                        time_match = re.search(r'time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})', line)
+                        if time_match and self.input_duration and self.input_duration > 0:
+                            hours, minutes, seconds, centiseconds = map(int, time_match.groups())
+                            current_time = hours * 3600 + minutes * 60 + seconds + centiseconds / 100
+                            progress = min(current_time / self.input_duration, 1.0)
+                            self.root.after(0, lambda p=progress: self._update_progress(p))
+                    except (ValueError, AttributeError):
+                        pass
 
-            else:
-                # Standard conversion
-                cmd.extend(self.get_standard_conversion_params(file_type, to_format))
+            # Wait for process to complete
+            self.conversion_process.wait()
 
-            # Add output file and overwrite flag
-            cmd.extend(["-y", str(output_file)])
-
-            # Run ffmpeg conversion
-            # Log the command for debugging
-            self.log_error(f"Running command: {' '.join(cmd)}")
-
-            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            return_code = self.conversion_process.returncode
+            stderr_text = ''.join(stderr_output)
 
             # Log the output
-            self.log_error(f"Return code: {result.returncode}")
-            self.log_error(f"STDOUT: {result.stdout}")
-            self.log_error(f"STDERR: {result.stderr}")
+            self.log_error(f"Return code: {return_code}")
+            self.log_error(f"STDERR: {stderr_text}")
 
-            if result.returncode == 0 and os.path.exists(output_file):
-                self.status_label.config(text=f"Conversion successful! Saved to: {output_file.name}", fg="green")
-                messagebox.showinfo("Success", f"File converted successfully!\n\nSaved as:\n{output_file}")
-            else:
-                self.status_label.config(text="Conversion failed", fg="red")
-                error_msg = result.stderr if result.stderr else "Unknown error occurred"
-                # Show only the last few lines of error for readability
-                error_lines = error_msg.split('\n')
-                relevant_error = '\n'.join([line for line in error_lines if 'error' in line.lower() or 'failed' in line.lower()][-5:])
-                if not relevant_error:
-                    relevant_error = '\n'.join(error_lines[-10:])
-                messagebox.showerror("Error", f"Conversion failed:\n\n{relevant_error}\n\nCheck converter_log.txt for details")
+            # Update UI on main thread
+            self.root.after(0, lambda: self._on_conversion_complete(return_code, temp_output_file, final_output_file, stderr_text))
+
         except Exception as e:
-            self.status_label.config(text="Conversion failed", fg="red")
-            self.log_error(f"Exception: {str(e)}")
-            messagebox.showerror("Error", f"An error occurred:\n{str(e)}\n\nCheck converter_log.txt for details")
+            self.log_error(f"Exception in conversion thread: {str(e)}")
+            self.root.after(0, lambda: self._on_conversion_error(str(e)))
+
+    def _update_progress(self, progress):
+        """Update progress bar and label (called on main thread)"""
+        if self.is_converting:
+            # Switch to determinate mode if we were in indeterminate
+            try:
+                self.progress_bar.stop()
+                self.progress_bar.configure(mode="determinate")
+            except:
+                pass
+            self.progress_bar.set(progress)
+            percent = int(progress * 100)
+            self.progress_label.configure(text=f"{percent}%")
+            self.status_label.configure(text=f"⏳ Converting... ({percent}%)", text_color="#3498db")
+
+    def _on_conversion_complete(self, return_code, temp_output_file, output_file, stderr_text):
+        """Handle conversion completion"""
+        if return_code == 0:
+            try:
+                # Success! Rename temp file to final file
+                # If target exists (and we confirmed overwrite), replace it
+                if os.path.exists(output_file):
+                    os.remove(output_file)
+                
+                os.rename(temp_output_file, output_file)
+                self.completed_count += 1
+                
+                # Check if it was a video-to-audio conversion (audio extract)
+                # Sometimes people want mp3 but select a video format? Standardize logic?
+                # For now just success.
+                
+            except Exception as e:
+                self.log_error(f"Error renaming file: {e}")
+                self.failed_files.append(f"{os.path.basename(output_file)} (Rename Error: {str(e)})")
+                self.failed_files_paths.append(self.input_file)  # Track for retry
+                
+                # Clean up temp file
+                if os.path.exists(temp_output_file):
+                    try:
+                        os.remove(temp_output_file)
+                    except:
+                        pass
+        else:
+            # Conversion failed
+            # Extract last error line from stderr if possible
+            error_reason = f"Error: {return_code}"
+            if stderr_text:
+                lines = stderr_text.strip().split('\n')
+                # Find last non-empty line
+                last_lines = [l for l in lines[-5:] if l.strip()]
+                if last_lines:
+                    error_reason += f"\nLast error: {last_lines[-1]}"
+            
+            self.failed_files.append(f"{os.path.basename(output_file)}\n({error_reason})")
+            self.failed_files_paths.append(self.input_file)  # Track for retry
+            
+            # Clean up temp file
+            if os.path.exists(temp_output_file):
+                try:
+                    os.remove(temp_output_file)
+                except:
+                    pass
+
+        # Process next file
+        self.process_next_file()
+
+    def _on_conversion_error(self, error_message):
+        """Handle conversion error (called on main thread)"""
+        # Log error and continue
+        self.log_error(f"Exception error: {error_message}")
+        if self.input_file:
+             self.failed_files.append(f"{os.path.basename(self.input_file)} (Exception: {error_message})")
+             self.failed_files_paths.append(self.input_file)  # Track for retry
+        else:
+             self.failed_files.append(f"Unknown file (Exception: {error_message})")
+             
+        # Process next file
+        self.root.after(100, self.process_next_file)
 
     def get_audio_extraction_params(self, to_format):
         """Get ffmpeg parameters for extracting audio from video"""
@@ -702,7 +1197,7 @@ class FileConverterApp:
         return params
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    root = ctk.CTk()
     app = FileConverterApp(root)
     root.mainloop()
 

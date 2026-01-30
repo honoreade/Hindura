@@ -1,17 +1,29 @@
-# File Converter Pro
+# Hindura Pro
 
-A simple and powerful file converter application for Windows built with Python and FFmpeg.
+A powerful, modern file converter for Windows with batch processing support.
 
-## Features
+## ✨ Features
 
+### Core Conversion
 - **Standard Conversion** - Convert between video, audio, image, and document formats
 - **Video to Audio** - Extract audio tracks from video files
 - **Video to GIF** - Create animated GIFs with customizable FPS and scale
-- **Resize** - Resize videos and images with preset or custom dimensions
+- **Resize** - Resize videos/images with preset or custom dimensions
 - **Compression** - Reduce file sizes with quality control (High/Medium/Low)
-- **Custom Output Folder** - Choose where to save converted files
 
-## Supported Formats
+### Batch & Workflow
+- **Batch Processing** - Convert multiple files at once
+- **Retry Failed** - One-click retry for failed conversions
+- **Custom Output Folder** - Choose where to save converted files
+- **Progress Tracking** - Real-time progress with percentage display
+
+### User Experience
+- **File Size Display** - See file sizes before converting
+- **Sound Notification** - Audio alert when conversion completes
+- **Remember Window Position** - Automatically saves and restores window size/position
+- **Dark/Light Theme** - Toggle between themes
+
+## 📋 Supported Formats
 
 | Type | Formats |
 |------|---------|
@@ -20,46 +32,41 @@ A simple and powerful file converter application for Windows built with Python a
 | Image | JPG, PNG, GIF, BMP, WebP, TIFF, ICO, SVG |
 | Document | PDF, TXT, DOCX, HTML |
 
-## Requirements
+## 🔧 Requirements
 
 - Windows 10/11
 - FFmpeg (for media conversions)
 
-## Installation
+## 📥 Installation
 
-### Option 1: Run the Executable (Recommended)
-
-1. Download `FileConverterPro.exe` from the `dist` folder
-2. Download FFmpeg Essentials from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
-3. Extract FFmpeg and place it so the path is: `C:\ffmpeg\bin\ffmpeg.exe`
-4. Run `FileConverterPro.exe`
+### Option 1: Run the Executable
+1. Download `HinduraPro.exe` from the releases
+2. Download FFmpeg from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
+3. Extract FFmpeg to `C:\ffmpeg\bin\ffmpeg.exe`
+4. Run `HinduraPro.exe`
 
 ### Option 2: Run from Source
-
-1. Ensure Python 3.8+ is installed
-2. Install FFmpeg and add to PATH
-3. Run: `python file_converter.py`
-
-## Usage
-
-1. Click **Browse** to select a file
-2. Choose the **Mode** (Standard Conversion, Resize, or Compression)
-3. Select the output **Format** from the "To" dropdown
-4. (Optional) Set resize dimensions or compression quality
-5. (Optional) Choose a custom output folder
-6. Click **Convert**
-
-## Building from Source
-
-To create your own executable:
-
 ```bash
-pip install pyinstaller
-pyinstaller --onefile --windowed --name "FileConverterPro" file_converter.py
+pip install customtkinter
+python file_converter.py
 ```
 
-The executable will be created in the `dist` folder.
+## 🚀 Usage
 
-## License
+1. Click **Add Files** to select files (or multiple at once)
+2. Choose the **Mode** (Standard Conversion, Resize, or Compression)
+3. Select the output **Format**
+4. (Optional) Set resize dimensions or compression quality
+5. Click **Convert**
+6. If any fail, use **🔄 Retry Failed** to reprocess them
+
+## 🛠️ Building from Source
+
+```bash
+pip install pyinstaller customtkinter
+pyinstaller --onefile --windowed --name "HinduraPro" file_converter.py
+```
+
+## 📄 License
 
 MIT License - Feel free to use and modify.

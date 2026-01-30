@@ -2,6 +2,8 @@
 
 A powerful, modern file converter for Windows with batch processing support.
 
+<img width="1453" height="1079" alt="image" src="https://github.com/user-attachments/assets/48e54a9d-3491-4db5-a71a-07e222743b80" />
+
 ## ✨ Features
 
 ### Core Conversion

@@ -90,8 +90,12 @@ class FileConverterApp:
     
     def find_ffmpeg(self):
         """Find ffmpeg executable in the current directory or system PATH"""
+        # Get the directory where the exe/script is located (for portable distribution)
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        
         # Check in current directory structure and common locations
         local_paths = [
+            os.path.join(app_dir, "ffmpeg.exe"),  # Portable: next to exe
             r"C:\ffmpeg-2026-01-12-git-21a3e44fbe-full_build\bin\ffmpeg.exe",
             "ffmpeg.exe",
             "ffmpeg/bin/ffmpeg.exe",
